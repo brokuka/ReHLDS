@@ -212,7 +212,6 @@ cvar_t sv_timeout = { "sv_timeout", "60", 0, 0.0f, NULL };
 // on changelevel and keeps the netchan warm, so the normal sv_timeout (which keys off
 // netchan.last_received) never fires and the half-connected slot survives forever. 0 = disabled.
 cvar_t sv_reconnect_timeout = { "sv_reconnect_timeout", "30", 0, 0.0f, NULL };
-static double g_ReconnectDeadline[MAX_CLIENTS];
 #endif // REHLDS_FIXES
 cvar_t sv_failuretime = { "sv_failuretime", "0.5", 0, 0.0f, NULL };
 cvar_t sv_cheats = { "sv_cheats", "0", FCVAR_SERVER, 0.0f, NULL };
@@ -2542,7 +2541,7 @@ void EXT_FUNC SV_ConnectClient_internal(void)
 	// Client (re)established its connection, so it obeyed the level-change "reconnect" command.
 	// Disarm the deadline armed by SV_InactivateClients. This happens before any resource
 	// download/spawn, so downloading players are never affected.
-	g_ReconnectDeadline[host_client - g_psvs.clients] = 0.0;
+	g_GameClients[host_client - g_psvs.clients]->SetReconnectDeadline(0.0);
 #endif // REHLDS_FIXES
 
 	bIsSecure = Steam_GSBSecure();
@@ -4011,17 +4010,18 @@ void SV_CheckTimeouts(void)
 		// time (see SV_InactivateClients), NOT from netchan.last_received, so a cheat that keeps
 		// the netchan warm to block the "reconnect" command (oxware svc_stufftext filter ->
 		// phantom slot) cannot dodge it the way it dodges the normal sv_timeout.
-		if (g_ReconnectDeadline[i] != 0.0)
+		double reconnectDeadline = g_GameClients[i]->GetReconnectDeadline();
+		if (reconnectDeadline != 0.0)
 		{
 			if (cl->fully_connected)
 			{
 				// Reconnect finished normally; stand down.
-				g_ReconnectDeadline[i] = 0.0;
+				g_GameClients[i]->SetReconnectDeadline(0.0);
 			}
-			else if (sv_reconnect_timeout.value > 0.0 && (realtime - g_ReconnectDeadline[i]) > sv_reconnect_timeout.value)
+			else if (sv_reconnect_timeout.value > 0.0 && (realtime - reconnectDeadline) > sv_reconnect_timeout.value)
 			{
 				Con_DPrintf("Dropping %s: failed to reconnect within %.0fs after level change\n", cl->name, sv_reconnect_timeout.value);
-				g_ReconnectDeadline[i] = 0.0;
+				g_GameClients[i]->SetReconnectDeadline(0.0);
 				SV_DropClient(cl, FALSE, "Failed to reconnect after level change");
 				continue;
 			}
@@ -7761,7 +7761,7 @@ void SV_InactivateClients(void)
 			// (SV_ConnectClient clears it) within sv_reconnect_timeout, or SV_CheckTimeouts
 			// force-drops it regardless of netchan activity. Closes the oxware changelevel
 			// phantom-slot exploit, where the cheat blocks "reconnect" and keeps the netchan warm.
-			g_ReconnectDeadline[i] = realtime;
+			g_GameClients[i]->SetReconnectDeadline(realtime);
 #endif // REHLDS_FIXES
 
 			SZ_Clear(&cl->netchan.message);
